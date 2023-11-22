@@ -109,7 +109,7 @@ export class CubejsServerCore {
 
   protected repositoryFactory: ((context: RequestContext) => SchemaFileRepository) | (() => FileRepository);
 
-  protected contextToDbType: DbTypeAsyncFn;
+  protected dbType: DbTypeAsyncFn;
 
   protected contextToExternalDbType: ExternalDbTypeFn;
 
@@ -172,7 +172,7 @@ export class CubejsServerCore {
     this.repository = new FileRepository(this.options.schemaPath);
     this.repositoryFactory = this.options.repositoryFactory || (() => this.repository);
 
-    this.contextToDbType = this.options.dbType;
+    this.dbType = this.options.dbType;
     this.contextToExternalDbType = wrapToFnIfNeeded(this.options.externalDbType);
     this.preAggregationsSchema = wrapToFnIfNeeded(this.options.preAggregationsSchema);
     this.orchestratorOptions = wrapToFnIfNeeded(this.options.orchestratorOptions);
@@ -370,6 +370,7 @@ export class CubejsServerCore {
    */
   protected reloadEnvVariables() {
     this.driver = null;
+    this.contextToDbTypeCache.reset();
     this.options.externalDbType = this.options.externalDbType ||
       <DatabaseType | undefined>process.env.CUBEJS_EXT_DB_TYPE;
     this.options.schemaPath = process.env.CUBEJS_SCHEMA_PATH || this.options.schemaPath;
@@ -428,6 +429,23 @@ export class CubejsServerCore {
   public initSQLServer() {
     const apiGateway = this.apiGateway();
     return apiGateway.initSQLServer();
+  }
+
+  protected readonly contextToDbTypeCache: LRUCache<string, Promise<DatabaseType>> = new LRUCache({
+    max: 250
+  });
+
+  protected async contextToDbType(appId: string, context: DriverContext): Promise<DatabaseType> {
+    const key = `${appId}_${context.dataSource}`;
+
+    if (this.contextToDbTypeCache.has(key)) {
+      return this.contextToDbTypeCache.get(key);
+    }
+
+    const dbTypePromise = this.dbType(context);
+    this.contextToDbTypeCache.set(key, dbTypePromise);
+
+    return dbTypePromise;
   }
 
   protected apiGateway(): ApiGateway {
@@ -489,36 +507,32 @@ export class CubejsServerCore {
 
   public async getCompilerApi(context: RequestContext) {
     const appId = await this.contextToAppId(context);
-    let compilerApi = this.compilerCache.get(appId);
     const currentSchemaVersion = this.options.schemaVersion && (() => this.options.schemaVersion(context));
 
-    if (!compilerApi) {
-      compilerApi = this.createCompilerApi(
-        this.repositoryFactory(context),
-        {
-          dbType: async (dataSourceContext) => {
-            const dbType = await this.contextToDbType({ ...context, ...dataSourceContext });
-            return dbType;
-          },
-          externalDbType: this.contextToExternalDbType(context),
-          dialectClass: (dialectContext) => (
-            this.options.dialectFactory &&
-            this.options.dialectFactory({ ...context, ...dialectContext })
-          ),
-          externalDialectClass: this.options.externalDialectFactory && this.options.externalDialectFactory(context),
-          schemaVersion: currentSchemaVersion,
-          preAggregationsSchema: await this.preAggregationsSchema(context),
-          context,
-          allowJsDuplicatePropsInSchema: this.options.allowJsDuplicatePropsInSchema,
-          allowNodeRequire: this.options.allowNodeRequire,
-        },
-      );
+    if (this.compilerCache.has(appId)) {
+      const compilerApi = this.compilerCache.get(appId);
+      compilerApi.schemaVersion = currentSchemaVersion;
 
-      this.compilerCache.set(appId, compilerApi);
+      return compilerApi;
     }
 
-    compilerApi.schemaVersion = currentSchemaVersion;
-    return compilerApi;
+    return this.createCompilerApi(
+      this.repositoryFactory(context),
+      {
+        dbType: async (dataSourceContext) => this.contextToDbType(appId, { ...context, ...dataSourceContext }),
+        externalDbType: this.contextToExternalDbType(context),
+        dialectClass: (dialectContext) => (
+          this.options.dialectFactory &&
+          this.options.dialectFactory({ ...context, ...dialectContext })
+        ),
+        externalDialectClass: this.options.externalDialectFactory && this.options.externalDialectFactory(context),
+        schemaVersion: currentSchemaVersion,
+        preAggregationsSchema: await this.preAggregationsSchema(context),
+        context,
+        allowJsDuplicatePropsInSchema: this.options.allowJsDuplicatePropsInSchema,
+        allowNodeRequire: this.options.allowNodeRequire,
+      },
+    );
   }
 
   public async resetInstanceState() {
@@ -551,7 +565,6 @@ export class CubejsServerCore {
 
     let externalPreAggregationsDriverPromise: Promise<BaseDriver> | null = null;
 
-    const contextToDbType: DbTypeAsyncFn = this.contextToDbType.bind(this);
     const externalDbType = this.contextToExternalDbType(context);
 
     // orchestrator options can be empty, if user didn't define it.
@@ -644,10 +657,14 @@ export class CubejsServerCore {
             }
           })();
         }),
-        contextToDbType: async (dataSource) => contextToDbType({
-          ...context,
-          dataSource
-        }),
+        contextToDbType: async (dataSource) => {
+          const appId = await this.contextToAppId(context);
+
+          return this.contextToDbType(appId, {
+            ...context,
+            dataSource
+          });
+        },
         // speedup with cache
         contextToExternalDbType: () => externalDbType,
         redisPrefix: orchestratorId,

@@ -20,13 +20,13 @@ class CubejsServerCoreExposed extends CubejsServerCore {
 
   public optsHandler: OptsHandler;
 
-  public contextToDbType: DbTypeAsyncFn;
-
   public contextToExternalDbType: ExternalDbTypeFn;
 
   public apiGateway = super.apiGateway;
 
   public reloadEnvVariables = super.reloadEnvVariables;
+
+  public contextToDbType = super.contextToDbType;
 }
 
 let message: string;
@@ -348,15 +348,15 @@ describe('OptsHandler class', () => {
     });
 
     process.env.CUBEJS_DB_TYPE = 'postgres';
-    expect(await core.contextToDbType({} as DriverContext)).toEqual('postgres');
+    expect(await core.contextToDbType('default', {} as DriverContext)).toEqual('postgres');
 
     process.env.CUBEJS_DB_TYPE = 'mysql';
     core.reloadEnvVariables();
-    expect(await core.contextToDbType({} as DriverContext)).toEqual('mysql');
+    expect(await core.contextToDbType('default', {} as DriverContext)).toEqual('mysql');
 
     process.env.CUBEJS_DB_TYPE = 'postgres';
     core.reloadEnvVariables();
-    expect(await core.contextToDbType({} as DriverContext)).toEqual('postgres');
+    expect(await core.contextToDbType('default', {} as DriverContext)).toEqual('postgres');
   });
 
   test('must determine custom drivers from the cube.js file', async () => {
