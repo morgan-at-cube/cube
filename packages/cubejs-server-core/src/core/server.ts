@@ -435,8 +435,8 @@ export class CubejsServerCore {
     max: 250
   });
 
-  protected async contextToDbType(appId: string, context: DriverContext): Promise<DatabaseType> {
-    const key = `${appId}_${context.dataSource}`;
+  protected async contextToDbType(orchestratorId: string, context: DriverContext): Promise<DatabaseType> {
+    const key = `${orchestratorId}_${context.dataSource}`;
 
     if (this.contextToDbTypeCache.has(key)) {
       return this.contextToDbTypeCache.get(key);
@@ -519,7 +519,11 @@ export class CubejsServerCore {
     return this.createCompilerApi(
       this.repositoryFactory(context),
       {
-        dbType: async (dataSourceContext) => this.contextToDbType(appId, { ...context, ...dataSourceContext }),
+        dbType: async (dataSourceContext) => {
+          const ctx = { ...context, ...dataSourceContext };
+          const orchestratorId = await this.contextToOrchestratorId(ctx);
+          return this.contextToDbType(orchestratorId, ctx);
+        },
         externalDbType: this.contextToExternalDbType(context),
         dialectClass: (dialectContext) => (
           this.options.dialectFactory &&
@@ -657,14 +661,10 @@ export class CubejsServerCore {
             }
           })();
         }),
-        contextToDbType: async (dataSource) => {
-          const appId = await this.contextToAppId(context);
-
-          return this.contextToDbType(appId, {
-            ...context,
-            dataSource
-          });
-        },
+        contextToDbType: async (dataSource) => this.contextToDbType(orchestratorId, {
+          ...context,
+          dataSource
+        }),
         // speedup with cache
         contextToExternalDbType: () => externalDbType,
         redisPrefix: orchestratorId,
@@ -828,6 +828,7 @@ export class CubejsServerCore {
     context: DriverContext,
     options?: OrchestratorInitedOptions,
   ): Promise<BaseDriver> {
+    console.log('resolveDriver');
     const val = await this.options.driverFactory(context);
     if (isDriver(val)) {
       return <BaseDriver>val;
