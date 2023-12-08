@@ -739,6 +739,7 @@ impl CubeScanWrapperNode {
             sql = new_sql_query;
 
             let original_alias = expr_name(&original_expr, &schema)?;
+            let original_alias_key = Column::from_name(&original_alias);
             let alias = if can_rename_columns {
                 let alias = expr_name(&expr, &schema)?;
                 let mut truncated_alias = non_id_regex.replace_all(&alias, "_").to_lowercase();
@@ -747,7 +748,7 @@ impl CubeScanWrapperNode {
                 for i in 1..10000 {
                     if !next_remapping
                         .iter()
-                        .any(|(_, v)| v == &Column::from_name(&alias))
+                        .any(|(k, v)| v == &Column::from_name(&alias) && k != &original_alias_key)
                     {
                         break;
                     }
@@ -758,11 +759,16 @@ impl CubeScanWrapperNode {
                 original_alias.clone()
             };
             if original_alias != alias {
-                if !next_remapping.contains_key(&Column::from_name(&alias)) {
-                    next_remapping.insert(
-                        Column::from_name(&original_alias),
-                        Column::from_name(&alias),
-                    );
+                let alias_column = Column::from_name(&alias);
+                if let Some(value) = next_remapping.get(&original_alias_key) {
+                    if value != &alias_column {
+                        return Err(CubeError::internal(format!(
+                            "Can't generate SQL for column expr: duplicate alias {}",
+                            original_alias
+                        )));
+                    }
+                } else {
+                    next_remapping.insert(original_alias_key, alias_column);
                     next_remapping.insert(
                         Column {
                             name: original_alias.clone(),
@@ -773,11 +779,6 @@ impl CubeScanWrapperNode {
                             relation: from_alias.clone(),
                         },
                     );
-                } else {
-                    return Err(CubeError::internal(format!(
-                        "Can't generate SQL for column expr: duplicate alias {}",
-                        alias
-                    )));
                 }
             }
 
