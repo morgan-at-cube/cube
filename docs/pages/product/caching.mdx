@@ -221,12 +221,6 @@ client to initiate a new data loading query or know if the current invocation
 wasn't initiated earlier by another client. Only Refresh Key freshness
 guarantees are provided in this case.
 
-For situations like real-time analytics or responding to live user changes to
-underlying data, the `refresh_key` query cache can prevent fresh data from
-showing up immediately. For these situations, the cache can effectively be
-disabled by setting the [`refresh_key.every`][ref-schema-ref-cube-refresh-key]
-parameter to something very low, like `1 second`.
-
 ## Inspecting Queries
 
 To inspect whether the query hits in-memory cache, pre-aggregation, or the
